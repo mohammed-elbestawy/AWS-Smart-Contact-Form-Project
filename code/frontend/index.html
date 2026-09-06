@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Us</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Get in touch</h1>
+    <p class="subtitle">We usually respond within 24 hours.</p>
+
+    <form id="contact-form" novalidate>
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" maxlength="200" required>
+
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" maxlength="200" required>
+
+      <label for="subject">Subject</label>
+      <input type="text" id="subject" name="subject" maxlength="200" required>
+
+      <label for="message">Message</label>
+      <textarea id="message" name="message" maxlength="2000" rows="5" required></textarea>
+
+      <button type="submit" id="submit-btn">Send Message</button>
+    </form>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
