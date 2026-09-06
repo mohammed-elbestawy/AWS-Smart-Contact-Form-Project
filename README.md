@@ -68,13 +68,6 @@ AWS WAF has **no Free Tier** — the "Recommended" rule package (which bundles B
 
 Every other component (S3, CloudFront, API Gateway, Lambda, SQS, DynamoDB, SNS, Cognito) has an always-free tier or near-zero idle cost and was left running.
 
-## Possible Improvements
-
-- Replace the keyword + sentiment spam heuristic with a custom-trained Comprehend classifier
-- Add a Dead Letter Queue (DLQ) on the SQS queue to catch messages that fail processing repeatedly
-- Move the WAF Web ACL into Infrastructure as Code (Terraform) so it can be recreated on demand for a live demo without manual reconfiguration
-- Add CloudWatch alarms on Lambda error rates and SQS queue depth
-
 ## Repository Structure
 
     AWS-Smart-Contact-Form-Project/
