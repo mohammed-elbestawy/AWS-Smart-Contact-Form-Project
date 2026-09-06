@@ -24,7 +24,7 @@ Every component below was designed, deployed, and verified by hand on a personal
 
 ## Architecture
 
-![Architecture Diagram](screenshots/architecture-diagram.png)
+![Architecture Diagram](screenshots/Smart-Contact-Form.drawio.png)
 
 | Layer | Service | Purpose |
 |---|---|---|
