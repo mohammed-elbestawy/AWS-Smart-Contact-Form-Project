@@ -6,25 +6,38 @@
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat&logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Live%20Tested-brightgreen)
 
+![Lambda](https://img.shields.io/badge/Lambda-FF9900?style=flat&logo=awslambda&logoColor=white)
+![SQS](https://img.shields.io/badge/SQS-FF4F8B?style=flat&logo=amazonsqs&logoColor=white)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6?style=flat&logo=amazondynamodb&logoColor=white)
+![Cognito](https://img.shields.io/badge/Cognito-DD344C?style=flat&logo=amazoncognito&logoColor=white)
+![Comprehend](https://img.shields.io/badge/Comprehend-232F3E?style=flat&logo=amazonaws&logoColor=white)
+![WAF](https://img.shields.io/badge/WAF-232F3E?style=flat&logo=amazonaws&logoColor=white)
+
 ## Table of Contents
-- [Overview](#overview)
+- [The Problem](#the-problem)
 - [Architecture](#architecture)
 - [Features](#features)
 - [Live Test Result](#live-test-result)
-- [Skills Demonstrated](#skills-demonstrated)
 - [Cost Decisions](#cost-decisions)
 - [Possible Improvements](#possible-improvements)
 - [Repository Structure](#repository-structure)
 
-## Overview
+## The Problem
 
-This started as a simple contact form and was deliberately extended into something closer to a real production system: messages are queued instead of processed inline, screened for spam using Amazon Comprehend before anyone gets notified, and reviewed through an admin dashboard that requires actual sign-in — not an open database query.
+A public contact form is an easy target: spam bots submit junk 24/7, malicious actors probe it for exploits, and every submission — real or fake — normally lands straight in the owner's inbox with no filtering and no access control on who can view past messages.
 
-Every component below was designed, deployed, and verified by hand on a personal AWS account. Full step-by-step build log is in [`STEPS.md`](STEPS.md); design rationale for every decision is in [`CONCEPTS.md`](CONCEPTS.md).
+This project builds a small defense-in-depth pipeline around a contact form to solve exactly that:
+
+| Risk | How this project handles it |
+|---|---|
+| Bots hammering the endpoint | **AWS WAF** rate-limits and blocks abusive traffic at the edge |
+| Spam / abusive messages reaching the inbox | **Amazon Comprehend** scores sentiment; suspicious messages are stored but never trigger a notification |
+| Slow user experience while the backend does work | **SQS** decouples the request from processing — the user gets an instant response |
+| Anyone with the DynamoDB console being able to read messages | **Cognito** locks the admin view behind real authentication |
 
 ## Architecture
 
-![Architecture Diagram](screenshots/Smart-Contact-Form.drawio.png)
+![Architecture Diagram](screenshots/architecture-diagram.png)
 
 | Layer | Service | Purpose |
 |---|---|---|
@@ -54,19 +67,18 @@ Submitted both a normal message and a message containing spam markers. The norma
 
 ![Admin dashboard showing flagged and clean messages](screenshots/13-fulltest-admin-dashboard.png)
 
-## Skills Demonstrated
-
-- Decoupling a request/response flow with SQS so user-facing latency stays low
-- Using a managed AI service (Comprehend) as one signal in a broader filtering decision, rather than trusting it blindly
-- Protecting an API Gateway endpoint with a Cognito authorizer, so authorization is enforced before any application code runs
-- Evaluating AWS WAF's pricing model in detail and making a deliberate, documented trade-off between coverage and cost
-- Reusing a proven security pattern (CloudFront + OAC + private S3) across multiple projects instead of reinventing it each time
-
 ## Cost Decisions
 
 AWS WAF has **no Free Tier** — the "Recommended" rule package (which bundles Bot Control) was estimated at $58-59 per 10M requests/month, with fixed hourly charges regardless of real traffic. A custom, minimal rule pack (rate limiting + core rule set only, ~$11 baseline) was built instead, verified working, and the Web ACL was deleted immediately after capturing evidence — since this is a demo project with no real traffic to protect. Full reasoning in [`STEPS.md`](STEPS.md#step-10).
 
 Every other component (S3, CloudFront, API Gateway, Lambda, SQS, DynamoDB, SNS, Cognito) has an always-free tier or near-zero idle cost and was left running.
+
+## Possible Improvements
+
+- Replace the keyword + sentiment spam heuristic with a custom-trained Comprehend classifier
+- Add a Dead Letter Queue (DLQ) on the SQS queue to catch messages that fail processing repeatedly
+- Move the WAF Web ACL into Infrastructure as Code (Terraform) so it can be recreated on demand for a live demo without manual reconfiguration
+- Add CloudWatch alarms on Lambda error rates and SQS queue depth
 
 ## Repository Structure
 
