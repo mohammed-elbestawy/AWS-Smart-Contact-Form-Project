@@ -1,4 +1,4 @@
-const API_URL = "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod";
+const API_URL = "https://5f2icwc8ud.execute-api.eu-north-1.amazonaws.com/prod";
 
 const form = document.getElementById("contact-form");
 const submitBtn = document.getElementById("submit-btn");
