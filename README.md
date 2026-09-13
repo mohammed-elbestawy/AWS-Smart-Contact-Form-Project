@@ -66,6 +66,8 @@ Region: `eu-north-1`
 Submitted both a normal message and a message containing spam markers. The normal message triggered an instant email notification; the spam message was silently flagged and stored without notifying the owner. Both were visible, correctly labeled, in the Cognito-authenticated admin dashboard.
 
 ![Admin dashboard showing flagged and clean messages](screenshots/13-fulltest-admin-dashboard.png)
+![Admin dashboard showing flagged and clean messages](screenshots/13-fulltest-admin-dashboard(2).png)
+
 
 ## Cost Decisions
 
