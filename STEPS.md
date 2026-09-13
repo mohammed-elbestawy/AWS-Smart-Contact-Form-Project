@@ -1,385 +1,372 @@
-<a id="top"></a>
+# 🛠️ Smart Contact Form — Build Steps
 
-# 🛠️ Build Log — Smart Contact Form
+> Full step-by-step build log for the serverless Smart Contact Form, including screenshots, security configuration, testing, and cost decisions.
 
-A step-by-step record of the AWS resources created, their important settings, and the real engineering decisions made during the build.
+## Table of Contents
 
-## 📋 Quick Navigation
-
-| Step | Section |
-|---|---|
-| 1 | [🗃️ DynamoDB Table](#step-1) |
-| 2 | [📬 SQS Queue](#step-2) |
-| 3 | [📣 SNS Topic](#step-3) |
-| 4 | [🔑 Cognito User Pool](#step-4) |
-| 5 | [🔐 IAM Role & Policy](#step-5) |
-| 6 | [⚡ Lambda: submit-handler](#step-6) |
-| 7 | [⚡ Lambda: message-processor](#step-7) |
-| 8 | [⚡ Lambda: get-messages](#step-8) |
-| 9 | [🔌 API Gateway](#step-9) |
-| 10 | [🛡️ AWS WAF](#step-10) |
-| 11 | [🌍 S3 + CloudFront (OAC)](#step-11) |
-| 12 | [🔒 CORS Restriction](#step-12) |
-| 13 | [✅ End-to-End Test](#step-13) |
+- [Step 1 — DynamoDB](#step-1--dynamodb)
+- [Step 2 — SQS](#step-2--sqs)
+- [Step 3 — SNS](#step-3--sns)
+- [Step 4 — Cognito](#step-4--cognito)
+- [Step 5 — IAM Role](#step-5--iam-role)
+- [Step 6 — Submit Lambda](#step-6--submit-lambda)
+- [Step 7 — Message Processor Lambda](#step-7--message-processor-lambda)
+- [Step 8 — Get Messages Lambda](#step-8--get-messages-lambda)
+- [Step 9 — API Gateway](#step-9--api-gateway)
+- [Step 10 — AWS WAF](#step-10--aws-waf)
+- [Step 11 — S3 + CloudFront](#step-11--s3--cloudfront)
+- [Step 12 — CORS Restriction](#step-12--cors-restriction)
+- [Step 13 — End-to-End Test](#step-13--end-to-end-test)
 
 ---
 
-<a id="step-1"></a>
-## Step 1 — 🗃️ DynamoDB Table
+## Step 1 — DynamoDB
 
-DynamoDB stores every submitted message together with its sentiment analysis result and spam classification.
+Create the DynamoDB table:
 
-| Setting | Value |
-|---|---|
-| Table name | `contact-messages` |
-| Partition key | `message_id` |
-| Key type | String |
-| Capacity mode | On-demand |
+- **Table:** `contact-messages`
+- **Partition key:** `message_id`
+- **Type:** String
+- **Capacity mode:** On-demand
 
-![DynamoDB table](screenshots/01-dynamodb.png)
+The table stores every submitted message together with the processing result, including sentiment information and the spam flag.
 
----
-
-<a id="step-2"></a>
-## Step 2 — 📬 SQS Queue
-
-SQS decouples the public submission request from the heavier processing pipeline.
-
-The user does not have to wait for Comprehend, DynamoDB, and SNS operations to finish before receiving a response.
-
-| Setting | Value |
-|---|---|
-| Queue name | `contact-messages-queue` |
-| Type | Standard |
-| Visibility timeout | 30 seconds |
-
-![SQS queue](screenshots/02-sqs-queue.png)
+![DynamoDB](screenshots/01-dynamodb.png)
 
 ---
 
-<a id="step-3"></a>
-## Step 3 — 📣 SNS Topic
+## Step 2 — SQS
 
-SNS sends an email notification to the site owner for messages that pass the spam check.
+Create a Standard SQS queue:
 
-| Setting | Value |
-|---|---|
-| Topic name | `contact-notifications` |
-| Type | Standard |
-| Subscription | Email |
-| Subscription status | Confirmed |
+- **Queue:** `contact-messages-queue`
+- **Type:** Standard
+- **Visibility timeout:** 30 seconds
 
-![SNS topic](screenshots/03-sns-topic.png)
+SQS separates the public submission request from the slower processing pipeline. The submission Lambda can acknowledge the request quickly while the processor works asynchronously.
+
+![SQS Queue](screenshots/02-sqs-queue.png)
 
 ---
 
-<a id="step-4"></a>
-## Step 4 — 🔑 Cognito User Pool
+## Step 3 — SNS
 
-Cognito provides real authentication for the admin dashboard instead of storing a hardcoded password in the frontend.
+Create the notification topic:
 
-| Setting | Value |
-|---|---|
-| Pool name | `contact-admin-pool` |
-| Application type | Traditional web application |
-| Admin user | Created manually in Users |
+- **Topic:** `contact-notifications`
+- **Type:** Standard
+- **Subscription:** Email
+- Confirm the email subscription
 
-![Cognito user pool](screenshots/04-cognito-pool.png)
+The notification Lambda publishes to SNS only when a message passes the spam check.
 
-![Cognito admin user](screenshots/04-cognito-user.png)
+![SNS Topic](screenshots/03-sns-topic.png)
 
 ---
 
-<a id="step-5"></a>
-## Step 5 — 🔐 IAM Role & Policy
+## Step 4 — Cognito
 
-A shared Lambda execution role was configured with the permissions required by the application.
+Create the Cognito User Pool:
 
-The policy covers:
+- **Pool:** `contact-admin-pool`
+- **Application type:** Traditional web application
+- Create the admin user manually
+
+Cognito is used to protect `GET /messages`, so stored contact messages are not publicly accessible.
+
+![Cognito User Pool](screenshots/04-cognito-pool.png)
+
+![Cognito User](screenshots/04-cognito-user.png)
+
+---
+
+## Step 5 — IAM Role
+
+Create the Lambda execution role:
+
+- **Role:** `contact-lambda-role`
+
+The role is scoped to the services used by the application:
 
 - CloudWatch Logs
-- SQS message operations
-- DynamoDB operations
-- SNS publishing
-- Amazon Comprehend sentiment detection
+- SQS
+- DynamoDB
+- SNS
+- Amazon Comprehend
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "sqs:SendMessage",
-        "sqs:ReceiveMessage",
-        "sqs:DeleteMessage",
-        "sqs:GetQueueAttributes"
-      ],
-      "Resource": "arn:aws:sqs:*:*:contact-messages-queue"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:PutItem",
-        "dynamodb:Scan",
-        "dynamodb:GetItem"
-      ],
-      "Resource": "arn:aws:dynamodb:*:*:table/contact-messages"
-    },
-    {
-      "Effect": "Allow",
-      "Action": "sns:Publish",
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": "comprehend:DetectSentiment",
-      "Resource": "*"
-    }
-  ]
-}
+The policy is kept in the repository under `IAM/`.
+
+![IAM Role](screenshots/05-iam-role.png)
+
+---
+
+## Step 6 — Submit Lambda
+
+Create the first Lambda:
+
+- **Function:** `submit-handler`
+- **Runtime:** Python 3.12
+- **Role:** `contact-lambda-role`
+- **Timeout:** 10 seconds
+
+Environment variables:
+
+```text
+QUEUE_URL
+ALLOWED_ORIGIN
 ```
 
-![IAM role](screenshots/05-iam-role.png)
+Code:
+
+```text
+code/lambda/submit_handler/lambda_function.py
+```
+
+Its job is to receive the public submission, validate the request, place the message onto SQS, and return a fast response to the user.
+
+![Submit Lambda Configuration](screenshots/06-lambda-submit-config.png)
 
 ---
 
-<a id="step-6"></a>
-## Step 6 — ⚡ Lambda: `submit-handler`
+## Step 7 — Message Processor Lambda
 
-This function is intentionally lightweight.
+Create the asynchronous processor:
 
-It validates the incoming request and pushes the message to SQS. Heavy processing is handled asynchronously by `message-processor`.
+- **Function:** `message-processor`
+- **Runtime:** Python 3.12
+- **Role:** `contact-lambda-role`
 
-| Setting | Value |
-|---|---|
-| Function name | `submit-handler` |
-| Runtime | Python 3.12 |
-| Role | `contact-lambda-role` |
-| Environment variables | `QUEUE_URL`, `ALLOWED_ORIGIN` |
-| Timeout | 10 seconds |
+Environment variables:
 
-![submit-handler configuration](screenshots/06-lambda-submit-config.png)
+```text
+TABLE_NAME
+TOPIC_ARN
+```
 
-Full code: `code/lambda/submit_handler/lambda_function.py`
+Add `contact-messages-queue` as the SQS trigger.
 
----
+Code:
 
-<a id="step-7"></a>
-## Step 7 — ⚡ Lambda: `message-processor`
+```text
+code/lambda/message_processor/lambda_function.py
+```
 
-This function is triggered by SQS.
+The processor reads queued messages, performs sentiment analysis and spam checks, stores the result in DynamoDB, and publishes an SNS notification only when the message is not considered spam.
 
-Its job is to:
+![Message Processor Configuration](screenshots/07-lambda-processor-config.png)
 
-1. Read the queued message.
-2. Analyze sentiment using Amazon Comprehend.
-3. Apply the project's spam logic.
-4. Store the result in DynamoDB.
-5. Publish an SNS notification only when the message is considered legitimate.
-
-| Setting | Value |
-|---|---|
-| Function name | `message-processor` |
-| Runtime | Python 3.12 |
-| Role | `contact-lambda-role` |
-| Environment variables | `TABLE_NAME`, `TOPIC_ARN` |
-| Trigger | SQS — `contact-messages-queue` |
-
-![message-processor configuration](screenshots/07-lambda-processor-config.png)
-
-![SQS trigger](screenshots/07-lambda-trigger.png)
-
-Full code: `code/lambda/message_processor/lambda_function.py`
+![SQS Trigger](screenshots/07-lambda-trigger.png)
 
 ---
 
-<a id="step-8"></a>
-## Step 8 — ⚡ Lambda: `get-messages`
+## Step 8 — Get Messages Lambda
 
-This Lambda retrieves stored messages for the admin dashboard.
+Create the admin retrieval Lambda:
 
-It is not exposed as an unrestricted public endpoint; API Gateway protects it with Cognito authorization.
+- **Function:** `get-messages`
+- **Runtime:** Python 3.12
+- **Role:** `contact-lambda-role`
 
-| Setting | Value |
-|---|---|
-| Function name | `get-messages` |
-| Runtime | Python 3.12 |
-| Role | `contact-lambda-role` |
-| Environment variables | `TABLE_NAME`, `ALLOWED_ORIGIN` |
+Environment variables:
 
-![get-messages configuration](screenshots/08-lambda-getmessages-config.png)
+```text
+TABLE_NAME
+ALLOWED_ORIGIN
+```
 
-Full code: `code/lambda/get_messages/lambda_function.py`
+Code:
 
----
+```text
+code/lambda/get_messages/lambda_function.py
+```
 
-<a id="step-9"></a>
-## Step 9 — 🔌 API Gateway
+This Lambda reads stored messages from DynamoDB and returns them to the authenticated admin dashboard.
 
-API Gateway connects the frontend to the Lambda backend.
-
-| Setting | Value |
-|---|---|
-| API name | `contact-api` |
-| API type | REST API |
-| Endpoint type | Regional |
-| Stage | `prod` |
-| `POST /submit` | Public → `submit-handler` |
-| `GET /messages` | Cognito-authorized → `get-messages` |
-
-The admin route uses a Cognito authorizer, so API Gateway validates the user's authentication token before forwarding the request to Lambda.
-
-![API Gateway resources](screenshots/09-apigateway-resources.png)
-
-![Cognito authorizer](screenshots/09-apigateway-authorizer.png)
-
-![API Gateway invoke URL](screenshots/09-apigateway-invoke.png)
+![Get Messages Lambda Configuration](screenshots/08-lambda-getmessages-config.png)
 
 ---
 
-<a id="step-10"></a>
-## Step 10 — 🛡️ AWS WAF
+## Step 9 — API Gateway
 
-AWS WAF was added as an additional protection layer in front of the API.
+Create the REST API:
 
-### Rules Used
+- **API:** `contact-api`
+- **Endpoint type:** Regional
+- **Stage:** `prod`
 
-| Rule | Purpose |
-|---|---|
-| Custom rate-based rule | Block abusive request rates |
-| AWS Managed Core Rule Set | Protect against common web exploits |
+Routes:
 
-The rate-based rule was configured for **100 requests per 5 minutes**.
+| Method | Path | Access | Integration |
+| --- | --- | --- | --- |
+| POST | `/submit` | Public | `submit-handler` |
+| GET | `/messages` | Cognito-authorized | `get-messages` |
+
+Configure the Cognito authorizer for `/messages`. API Gateway rejects unauthenticated requests before they reach the Lambda function.
+
+![API Gateway Resources](screenshots/09-apigateway-resources.png)
+
+![API Gateway Authorizer](screenshots/09-apigateway-authorizer.png)
+
+![API Gateway Invoke Configuration](screenshots/09-apigateway-invoke.png)
+
+---
+
+## Step 10 — AWS WAF
+
+Create a Regional WAF Web ACL for the API.
+
+The test configuration used:
+
+- Rate-based rule: **100 requests / 5 minutes**
+- AWS-managed **Core Rule Set**
+- Association with the API Gateway `prod` stage
+
+The AWS WAF Recommended preset was not kept because it adds significant ongoing cost for a small portfolio project. The smaller custom configuration was sufficient to demonstrate rate limiting and managed-rule protection.
+
+The WAF configuration was tested successfully, including blocked-request evidence.
 
 ![WAF Web ACL](screenshots/10-waf-webacl.png)
 
-![WAF rules](screenshots/10-waf-rules.png)
+![WAF Rules](screenshots/10-waf-rules.png)
 
-### 💰 Cost Decision
+### Cost Decision
 
-WAF was not left running permanently.
+AWS WAF has no Free Tier. Because this project is a demonstration and does not have production traffic, the Web ACL was **deleted immediately after testing and capturing screenshots**.
 
-The recommended WAF package includes additional protection such as Bot Control and can introduce significant fixed and request-based costs. WAF also does not provide the same Free Tier-style idle economics as the serverless services used elsewhere in this demo.
-
-For this portfolio project:
-
-1. A minimal WAF configuration was created.
-2. The rules were validated.
-3. Rate-limit blocking was tested.
-4. Screenshots were captured as evidence.
-5. The Web ACL was deleted immediately afterward.
-
-This gives the project a real WAF implementation and test without leaving a continuously billable protection layer attached to a demo API.
-
-![WAF blocked request test](screenshots/13-fulltest-waf-blocked.png)
+This keeps the protection concept documented without leaving a paid WAF resource running unnecessarily.
 
 ---
 
-<a id="step-11"></a>
-## Step 11 — 🌍 S3 + CloudFront (Private, via OAC)
+## Step 11 — S3 + CloudFront
 
-The frontend is hosted in S3 but the bucket itself remains private.
+Create the frontend hosting layer:
 
-CloudFront is the only service allowed to read the S3 origin through **Origin Access Control (OAC)**.
+- Private S3 bucket: `contact-frontend-<account-id>`
+- **Block Public Access:** On
+- CloudFront distribution
+- Origin Access Control (OAC)
+- Viewer protocol policy: **Redirect HTTP to HTTPS**
+- Default root object: `index.html`
 
-| Setting | Value |
-|---|---|
-| Bucket | `contact-frontend-<account-id>` |
-| Block Public Access | On |
-| CloudFront origin access | OAC |
-| Viewer protocol policy | Redirect HTTP to HTTPS |
-| Default root object | `index.html` |
+The S3 bucket remains private and CloudFront is used as the public HTTPS entry point.
 
-![S3 bucket](screenshots/11-s3-bucket.png)
+![S3 Bucket](screenshots/11-s3-bucket.png)
 
-![CloudFront distribution](screenshots/11-cloudfront-distribution.png)
+![S3 Bucket Policy](screenshots/11-s3-bucket-policy.png)
 
-![S3 bucket policy](screenshots/11-s3-bucket-policy.png)
+![CloudFront Distribution](screenshots/11-cloudfront-distribution.png)
 
 ---
 
-<a id="step-12"></a>
-## Step 12 — 🔒 CORS Restriction
+## Step 12 — CORS Restriction
 
-The public-facing Lambda functions were configured to allow the real CloudFront frontend origin instead of using a wildcard.
+After the CloudFront distribution was available, the Lambda CORS configuration was changed from:
 
-| Setting | Before | Final |
-|---|---|---|
-| `ALLOWED_ORIGIN` | `*` | CloudFront domain |
+```text
+*
+```
 
-![Lambda allowed origin](screenshots/12-lambda-allowed-origin.png)
+to the real CloudFront origin.
 
-This prevents unrelated browser origins from being treated as trusted frontend origins.
+This prevents the backend from accepting browser requests from arbitrary origins.
 
----
-
-<a id="step-13"></a>
-## Step 13 — ✅ End-to-End Test
-
-The final test covered the full application pipeline.
-
-### Test 1 — Normal Message
-
-A normal message was submitted.
-
-Expected and observed behavior:
-
-- Frontend returned a successful response.
-- Message was processed asynchronously.
-- Message was stored.
-- SNS notification email was sent.
-- Message appeared in the admin dashboard.
-
-![Normal message](screenshots/13-fulltest-normal.png)
-
-### Test 2 — Spam Message
-
-A message containing spam markers such as `"buy now"` and `"click here"` was submitted.
-
-Expected and observed behavior:
-
-- Message was stored.
-- `is_spam` was set to `true`.
-- No SNS notification was sent.
-- Message remained visible in the admin dashboard.
-
-![Spam message](screenshots/13-fulltest-spam.png)
-
-### Test 3 — Authenticated Admin Dashboard
-
-The Cognito admin user logged in successfully and could retrieve the stored messages.
-
-![Admin dashboard](screenshots/13-fulltest-admin-dashboard.png)
-
-### Final Verification
-
-| Check | Result |
-|---|---|
-| Normal message → success response | ✅ |
-| Normal message → notification sent | ✅ |
-| Spam message → flagged | ✅ |
-| Spam message → no notification | ✅ |
-| Both messages stored | ✅ |
-| Cognito admin login | ✅ |
-| Admin dashboard shows messages | ✅ |
-| WAF rate-limit behavior | ✅ |
-
-> **WAF note:** the WAF block behavior was verified during Step 10. It was not repeated after the Web ACL was deleted.
+![Allowed Origin](screenshots/12-lambda-allowed-origin.png)
 
 ---
 
-<div align="center">
+## Step 13 — End-to-End Test
 
-**[⬆ Back to top](#top)**
+The complete application was tested through the deployed frontend.
 
-</div>
+### Normal Message
+
+A normal contact message was submitted successfully and triggered the owner notification.
+
+![Normal Message](screenshots/13-fulltest-normal.png)
+
+![Normal Message](screenshots/13-fulltest-normal%282%29.png)
+
+### Spam Message
+
+A message containing spam markers such as:
+
+```text
+buy now
+click here
+```
+
+was stored with:
+
+```text
+is_spam: true
+```
+
+and did not trigger the owner notification.
+
+![Spam Message](screenshots/13-fulltest-spam.png)
+
+![Spam Message](screenshots/13-fulltest-spam%282%29.png)
+
+### Admin Dashboard
+
+Both messages remained visible through the Cognito-authenticated admin dashboard, with the spam message correctly labeled.
+
+![Admin Dashboard](screenshots/13-fulltest-admin-dashboard.png)
+
+![Admin Dashboard](screenshots/13-fulltest-admin-dashboard%282%29.png)
+
+![Admin Dashboard](screenshots/13-fulltest-admin-dashboard%283%29.png)
+
+### WAF Test Evidence
+
+The WAF blocking behavior was verified during Step 10 before the Web ACL was deleted.
+
+![WAF Blocked](screenshots/13-fulltest-waf-blocked.png)
+
+![WAF Blocked](screenshots/13-fulltest-waf-blocked%282%29.png)
+
+---
+
+## Final Architecture
+
+![Architecture Diagram](screenshots/architecture-diagram.png)
+
+The project uses a defense-in-depth serverless flow:
+
+```text
+CloudFront
+    │
+    └── Private S3
+
+Client
+    │
+    ▼
+API Gateway
+    │
+    ├── POST /submit
+    │       │
+    │       ▼
+    │   submit-handler
+    │       │
+    │       ▼
+    │      SQS
+    │       │
+    │       ▼
+    │ message-processor
+    │       ├── Comprehend
+    │       ├── DynamoDB
+    │       └── SNS
+    │
+    └── GET /messages
+            │
+            ▼
+        Cognito
+            │
+            ▼
+       get-messages
+            │
+            ▼
+        DynamoDB
+```
+
+See [`CONCEPTS.md`](CONCEPTS.md) for the reasoning behind the architecture and security/cost decisions.

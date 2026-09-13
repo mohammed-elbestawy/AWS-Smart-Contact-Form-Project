@@ -1,219 +1,186 @@
-<a id="top"></a>
+# 🧠 Smart Contact Form — Concepts & Design Decisions
 
-# 🧠 Design Concepts & Rationale
+> The main architectural, security, asynchronous-processing, AI, and cost decisions behind the Smart Contact Form.
 
-This file explains **why** the architecture was designed this way and covers the questions most likely to come up in an AWS, Cloud Security, or DevSecOps interview.
+## Table of Contents
 
-## 📋 Quick Navigation
-
-| Topic | Section |
-|---|---|
-| 📬 | [Decoupling & Async Processing](#decoupling) |
-| 🤖 | [AI-Assisted Spam Detection](#ai) |
-| 🔐 | [Authentication & Authorization](#authentication) |
-| 🛡️ | [Defense in Depth](#security) |
-| 🌍 | [Private S3 + CloudFront OAC](#cloudfront) |
-| 🔑 | [IAM & Least Privilege](#iam) |
-| 🔒 | [CORS](#cors) |
-| 💰 | [Cost Decisions](#cost) |
-| 🚀 | [Possible Improvements](#improvements) |
+- [Decoupling & Async Processing](#decoupling--async-processing)
+- [AI-Based Spam Detection](#ai-based-spam-detection)
+- [Security Decisions](#security-decisions)
+- [Cost Decisions](#cost-decisions)
 
 ---
 
-<a id="decoupling"></a>
-## 📬 Decoupling & Async Processing
+## Decoupling & Async Processing
 
-| Question | Answer |
-|---|---|
-| Why does `submit-handler` push to SQS instead of processing the message directly? | The submission endpoint only needs to acknowledge receipt quickly. Comprehend analysis, DynamoDB writes, and SNS publishing can take additional time or fail independently. SQS separates the user's request from that background work. |
-| Why use SQS Standard instead of FIFO? | Contact form messages have no ordering dependency. Standard SQS provides the required queueing behavior without paying for ordering guarantees the application does not need. |
-| What happens if `message-processor` fails? | The SQS message is not successfully completed, so it becomes visible again after the visibility timeout and can be retried. This reduces the chance of silently losing a submission. |
-| What is the main architectural benefit? | The frontend-facing request path stays fast while backend processing can scale and retry independently. |
-
----
-
-<a id="ai"></a>
-## 🤖 AI-Assisted Spam Detection
-
-| Question | Answer |
-|---|---|
-| Why Amazon Comprehend? | It provides managed, pre-trained language analysis without requiring the project to train or host its own ML model. |
-| Is sentiment analysis itself a spam detector? | No. Negative sentiment is not automatically spam, and spam can have neutral or positive wording. The project therefore combines sentiment analysis with keyword heuristics. |
-| Why store spam messages instead of deleting them? | Immediate deletion can create false positives and permanently lose legitimate messages. Storing them allows an administrator to review the classification. |
-| Why perform the analysis asynchronously? | AI analysis is unnecessary for the immediate HTTP acknowledgment, so moving it behind SQS keeps the public request path lightweight. |
-
----
-
-<a id="authentication"></a>
-## 🔐 Authentication & Authorization
-
-| Question | Answer |
-|---|---|
-| Why Cognito instead of a hardcoded password in the frontend? | A frontend password is not a proper authentication system and can be extracted from client-side code. Cognito provides real user authentication and token-based access. |
-| Why attach Cognito to API Gateway? | API Gateway can reject unauthenticated requests before the Lambda function executes. This moves an important security control closer to the API boundary. |
-| Is the Cognito Pool ID or Client ID secret? | No. These identifiers can be present in browser-side configuration. They identify the Cognito resources; they do not grant administrative access by themselves. |
-| What actually protects `/messages`? | The authenticated Cognito identity and the token validation performed by the API Gateway authorizer. |
-
----
-
-<a id="security"></a>
-## 🛡️ Defense in Depth
-
-The project intentionally uses multiple independent controls.
+The submission path is intentionally separated from the processing path:
 
 ```text
-Internet
-   │
-   ▼
-CloudFront ──► Private S3
-   │
-   ▼
-AWS WAF
-   │
-   ▼
-API Gateway
-   │
-   ├── POST /submit ──► submit-handler ──► SQS
-   │                                      │
-   │                                      ▼
-   │                              message-processor
-   │                                 │      │
-   │                                 ▼      ▼
-   │                              DynamoDB  SNS
-   │
-   └── GET /messages
-             │
-       Cognito Authorizer
-             │
-             ▼
-       get-messages
-             │
-             ▼
-          DynamoDB
+User
+  │
+  ▼
+submit-handler
+  │
+  ▼
+SQS
+  │
+  ▼
+message-processor
+  ├── Comprehend
+  ├── DynamoDB
+  └── SNS
 ```
 
-### Why multiple layers?
+The user only needs the submission to be accepted quickly. Sentiment analysis, database writes, and notifications can take longer or fail independently.
 
-No single service solves every problem:
+Using SQS means the public Lambda does not need to wait for every downstream operation before returning a response.
 
-- **CloudFront + OAC** protects the S3 origin from direct public access.
-- **WAF** reduces abusive and malicious HTTP traffic.
-- **API Gateway** provides the API boundary.
-- **Cognito** protects administrative access.
-- **IAM** controls what Lambda functions can do.
-- **SQS** isolates processing failures from the public request.
-- **Spam filtering** reduces unwanted notifications.
+### Why Standard SQS?
 
-This is a practical example of **defense in depth**.
+A Standard queue was selected because message ordering is not required for this contact form.
 
----
+The application benefits more from the high throughput and simple, low-cost queue model than from strict ordering.
 
-<a id="cloudfront"></a>
-## 🌍 Private S3 + CloudFront OAC
+### Retry Behavior
 
-| Question | Answer |
-|---|---|
-| Why not make the S3 bucket public? | Public S3 access is unnecessary when CloudFront can serve the site. Keeping the bucket private reduces the number of ways the origin can be accessed. |
-| What does OAC do? | Origin Access Control lets CloudFront authenticate when accessing the S3 origin, while the bucket policy can restrict access to the specific CloudFront distribution. |
-| Why redirect HTTP to HTTPS? | HTTPS protects the connection between the browser and CloudFront and prevents users from continuing over plain HTTP. |
-| Why use CloudFront for a static frontend? | It provides HTTPS delivery, caching, and a clean public entry point while keeping the S3 origin private. |
+When a message is received from SQS, it becomes temporarily invisible to other consumers for the visibility timeout.
+
+If processing fails and the message is not successfully removed, it becomes available again and can be retried.
+
+This gives the processing pipeline basic resilience without requiring the submission request to remain open.
 
 ---
 
-<a id="iam"></a>
-## 🔑 IAM & Least Privilege
+## AI-Based Spam Detection
 
-The Lambda role was designed around the resources the application actually uses.
+Amazon Comprehend provides managed sentiment analysis without requiring the project to build or operate its own machine-learning infrastructure.
 
-The policy includes permissions for:
+The project does **not** treat sentiment alone as a complete spam classifier.
 
-- Writing CloudWatch Logs
-- Sending/receiving/deleting SQS messages
-- Reading/writing the contact-message table
-- Publishing SNS notifications
-- Calling `comprehend:DetectSentiment`
+Instead, spam detection combines:
 
-### Why least privilege?
+- Amazon Comprehend sentiment analysis
+- Simple keyword heuristics for obvious spam markers
 
-If a Lambda function is compromised, excessive IAM permissions increase the potential impact.
+This keeps the implementation lightweight while demonstrating how a managed AI service can be integrated into a serverless workflow.
 
-The principle is:
+### Why Store Spam Instead of Rejecting It?
 
-> Give a workload only the permissions required to perform its job.
+Suspicious messages are stored with an `is_spam` flag rather than being discarded immediately.
 
-A further production improvement would be to split the shared role into separate execution roles for the three Lambdas and scope wildcard resources such as SNS and Comprehend wherever practical.
+This avoids losing legitimate messages because of a false positive and gives the administrator the ability to review what the system classified as spam.
+
+The notification step is where the spam decision becomes operationally important: flagged messages do not notify the owner.
 
 ---
 
-<a id="cors"></a>
-## 🔒 CORS
+## Security Decisions
 
-| Question | Answer |
-|---|---|
-| Why was `ALLOWED_ORIGIN=*` changed? | A wildcard allows browser requests from any origin. The project has a known frontend origin, so restricting it is a better security posture. |
-| Does CORS replace authentication? | No. CORS is a browser security mechanism; it is not an authentication or authorization system. |
-| Why restrict both public-facing Lambdas? | Both frontend-facing functions can receive browser requests, so both need consistent origin handling. |
+### Cognito for the Admin Dashboard
 
----
+The `/messages` endpoint is protected with Amazon Cognito instead of placing a hardcoded password inside the Lambda function or frontend.
 
-<a id="cost"></a>
-## 💰 Cost Decisions
+The authentication flow is:
 
-### Why delete WAF but keep the other services?
+```text
+Admin
+  │
+  ▼
+Cognito Login
+  │
+  ▼
+Authenticated Request
+  │
+  ▼
+API Gateway Authorizer
+  │
+  ▼
+get-messages Lambda
+```
 
-WAF was intentionally treated as a temporary demonstration component because its Web ACL and rules can create ongoing charges even when the demo has little or no traffic.
+API Gateway can reject unauthenticated requests before they reach the Lambda function.
 
-The project therefore:
+### Cognito IDs Are Not Passwords
 
-1. Created the WAF configuration.
-2. Used only the rules needed for the demonstration.
-3. Tested the configuration.
-4. Captured screenshots.
-5. Deleted the Web ACL.
+The Cognito User Pool ID and App Client ID may appear in frontend JavaScript because they identify the Cognito application.
 
-The remaining serverless components are primarily usage-based and suitable for low-volume learning/testing, subject to the account's current Free Tier eligibility and AWS pricing.
+They are identifiers, not authentication secrets.
 
-### Why avoid the WAF Recommended/Bot Control package?
+Credentials and tokens must still be handled securely.
 
-Bot Control provides additional protection, but the project's purpose is to demonstrate the architecture and security concepts rather than protect a production website with meaningful bot traffic.
+### Private S3 + CloudFront OAC
 
-For a portfolio demo, the additional fixed/request-based cost does not provide enough practical value to justify keeping it enabled.
+The frontend bucket is kept private.
 
-### Why On-Demand DynamoDB?
+CloudFront uses Origin Access Control (OAC) to access the bucket, while users access the website through CloudFront over HTTPS.
 
-A contact form has low and unpredictable traffic.
+This avoids exposing the S3 bucket directly to the public internet.
 
-On-Demand mode avoids manually estimating provisioned capacity and is a natural fit for workloads where traffic can vary significantly.
+### CORS Restriction
 
----
+During development, the backend used:
 
-<a id="improvements"></a>
-## 🚀 Possible Improvements
+```text
+ALLOWED_ORIGIN=*
+```
 
-| Improvement | Benefit |
-|---|---|
-| SQS Dead Letter Queue | Isolates messages that repeatedly fail processing |
-| Separate IAM roles | Stronger least-privilege isolation between Lambdas |
-| Terraform / CloudFormation | Reproducible infrastructure and easier WAF recreation |
-| CloudWatch alarms | Detect Lambda failures and queue buildup |
-| Dedicated spam classifier | More specialized spam detection than heuristics |
-| Admin pagination | Better performance with many stored messages |
-| Admin filtering | Faster review of spam vs legitimate messages |
-| Input validation hardening | Better protection against malformed or oversized input |
-| Secrets management where needed | Centralized handling of sensitive configuration |
+After deployment, this was changed to the actual CloudFront domain.
+
+This reduces the set of browser origins allowed to make cross-origin requests to the API.
 
 ---
 
-## 🎯 Interview Summary
+## Cost Decisions
 
-If asked to explain the project in one answer:
+### AWS WAF
 
-> **“I built a serverless contact form on AWS using API Gateway and Lambda, but instead of processing submissions synchronously, I used SQS to decouple intake from background processing. A second Lambda analyzes messages with Amazon Comprehend and keyword heuristics, stores both legitimate and spam messages in DynamoDB, and sends SNS notifications only for legitimate submissions. The admin dashboard is protected by Cognito and API Gateway authorization. The frontend is hosted in a private S3 bucket behind CloudFront with OAC, and I also implemented and tested AWS WAF rate limiting and core rules, then removed the WAF Web ACL afterward to avoid unnecessary ongoing demo costs.”**
+AWS WAF was the main cost-sensitive component.
+
+The AWS WAF Recommended preset can include additional protections such as Bot Control and was estimated at roughly **$58–59 per 10M requests/month** for the configuration considered.
+
+A smaller custom configuration using rate limiting and the AWS-managed Core Rule Set was estimated at roughly **$11 baseline**.
+
+For a portfolio project without production traffic, keeping the Web ACL active would not provide enough value to justify the ongoing cost.
+
+Therefore:
+
+1. The WAF Web ACL was created.
+2. The rules were configured.
+3. Blocking behavior was tested.
+4. Screenshots were captured.
+5. The Web ACL was deleted.
+
+This demonstrates the security design while avoiding an unnecessary recurring resource.
+
+### DynamoDB Capacity Mode
+
+DynamoDB uses **On-Demand** capacity.
+
+For a small portfolio application with low and unpredictable traffic, on-demand capacity avoids the need to estimate provisioned read/write capacity in advance.
+
+It is a practical fit for this type of demo workload.
+
+### General Cost Strategy
+
+The project deliberately uses managed serverless services and avoids always-on compute.
+
+The cost-sensitive design principle is:
+
+> Keep the services that are useful for continued learning and testing, and remove resources with significant fixed ongoing charges when they are not needed.
+
+For the WAF specifically, the resource was removed after testing because it does not have a Free Tier.
 
 ---
 
-<div align="center">
+## Design Summary
 
-**[⬆ Back to top](#top)**
+The final design follows four main principles:
 
-</div>
+| **Principle** | **Implementation** |
+| --- | --- |
+| Fast user response | SQS decouples submission from processing |
+| Managed intelligence | Amazon Comprehend provides sentiment analysis |
+| Defense in depth | Cognito, private S3/OAC, CORS restriction, and tested WAF protection |
+| Cost awareness | Serverless services + deletion of the paid WAF resource after testing |
+
+The project is intentionally small, but the architecture demonstrates real AWS patterns that can be expanded into a production system.
