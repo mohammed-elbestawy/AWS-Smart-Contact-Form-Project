@@ -255,9 +255,9 @@ A final check across the whole pipeline — submission, AI filtering, and the pr
 | Admin dashboard shows all messages | ✅ |
 | WAF rules validated (Step 10) | ✅ |
 
-![Normal message submitted successfully](screenshots/13-fulltest-normal.png)
 ![Spam message flagged, no email sent](screenshots/13-fulltest-spam.png)
-![Admin dashboard showing all messages](screenshots/13-fulltest-admin-dashboard.png)
+![Normal message submitted successfully](screenshots/13-fulltest-spam(2).png)
+![Admin dashboard showing all messages](screenshots/13-fulltest-admin-dashboard(2).png)
 
 ---
 
