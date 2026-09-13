@@ -4,19 +4,19 @@
 
 ## Table of Contents
 
-- [Step 1 — DynamoDB](#step-1--dynamodb)
-- [Step 2 — SQS](#step-2--sqs)
-- [Step 3 — SNS](#step-3--sns)
-- [Step 4 — Cognito](#step-4--cognito)
-- [Step 5 — IAM Role](#step-5--iam-role)
-- [Step 6 — Submit Lambda](#step-6--submit-lambda)
-- [Step 7 — Message Processor Lambda](#step-7--message-processor-lambda)
-- [Step 8 — Get Messages Lambda](#step-8--get-messages-lambda)
-- [Step 9 — API Gateway](#step-9--api-gateway)
-- [Step 10 — AWS WAF](#step-10--aws-waf)
-- [Step 11 — S3 + CloudFront](#step-11--s3--cloudfront)
-- [Step 12 — CORS Restriction](#step-12--cors-restriction)
-- [Step 13 — End-to-End Test](#step-13--end-to-end-test)
+- [DynamoDB](#step-1--dynamodb)
+- [SQS](#step-2--sqs)
+- [SNS](#step-3--sns)
+- [Cognito](#step-4--cognito)
+- [IAM Role](#step-5--iam-role)
+- [Submit Lambda](#step-6--submit-lambda)
+- [Message Processor Lambda](#step-7--message-processor-lambda)
+- [Get Messages Lambda](#step-8--get-messages-lambda)
+- [API Gateway](#step-9--api-gateway)
+- [AWS WAF](#step-10--aws-waf)
+- [S3 + CloudFront](#step-11--s3--cloudfront)
+- [CORS Restriction](#step-12--cors-restriction)
+- [End-to-End Test](#step-13--end-to-end-test)
 
 ---
 
